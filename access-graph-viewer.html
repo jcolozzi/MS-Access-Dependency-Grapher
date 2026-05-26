@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Access Graph Viewer</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    :root {
+      --border: #d0d7de;
+      --panel: #f6f8fa;
+      --text: #1f2328;
+      --muted: #57606a;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; color: var(--text); font: 14px/1.4 Arial, sans-serif; }
+    body { display: grid; grid-template-columns: minmax(0, 1fr) 360px; }
+
+    #left {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      height: 100vh;
+    }
+
+    #toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: #fff;
+    }
+
+    #toolbar input[type="text"] {
+      min-width: 220px;
+      padding: 6px 8px;
+    }
+
+    #toolbar button,
+    #toolbar label.buttonish {
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 6px 10px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    #toolbar label.buttonish input {
+      display: none;
+    }
+
+    #toolbar .inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+    }
+
+    #network {
+      min-width: 0;
+      min-height: 0;
+      background: #fff;
+    }
+
+    #status {
+      padding: 8px 12px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      background: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #right {
+      height: 100vh;
+      overflow: auto;
+      border-left: 1px solid var(--border);
+      background: var(--panel);
+    }
+
+    .panel {
+      padding: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+
+    .group-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 10px;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 10px;
+    }
+
+    .stat-grid div:nth-child(odd) {
+      color: var(--muted);
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: 12px/1.45 Consolas, Menlo, monospace;
+    }
+
+    .hint {
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    .legend {
+      display: grid;
+      gap: 6px;
+    }
+
+    .legend span {
+      display: inline-block;
+      min-width: 90px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div id="left">
+    <div id="toolbar">
+      <label class="buttonish">Load graph.json
+        <input id="fileInput" type="file" accept=".json,application/json">
+      </label>
+      <button id="reloadButton" type="button">Try graph.json</button>
+      <input id="searchBox" type="text" placeholder="Search node label or ID">
+      <button id="searchButton" type="button">Find</button>
+      <button id="fitButton" type="button">Fit</button>
+      <label class="inline"><input id="physicsToggle" type="checkbox" checked> Physics</label>
+      <label class="inline"><input id="hierarchicalToggle" type="checkbox"> Hierarchical</label>
+      <label class="inline"><input id="labelsToggle" type="checkbox" checked> Edge labels</label>
+    </div>
+    <div id="network"></div>
+    <div id="status">Load a graph.json file or keep a graph.json beside this HTML file and click Try graph.json.</div>
+  </div>
+
+  <aside id="right">
+    <section class="panel">
+      <h2>Filters</h2>
+      <div id="groupFilters" class="group-list"></div>
+      <div class="hint">Only nodes with checked groups are shown. Edges are shown only when both endpoints are visible.</div>
+    </section>
+
+    <section class="panel">
+      <h2>Summary</h2>
+      <div id="summary" class="stat-grid"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Legend</h2>
+      <div class="legend">
+        <div><span style="color:#2da44e">&#9632; table</span> database shape</div>
+        <div><span style="color:#0969da">&#9670; query</span> diamond</div>
+        <div><span style="color:#1a7f7a">&#9632; form</span> box</div>
+        <div><span style="color:#bf8700">&#9632; report</span> box</div>
+        <div><span style="color:#8250df">&#11042; macro</span> hexagon</div>
+        <div><span style="color:#57606a">&#9650; module</span> triangle</div>
+        <div><span style="color:#54aeff">&#9679; sql</span> ellipse</div>
+        <div><span style="color:#afb8c1">&#8226; field</span> dot</div>
+      </div>
+      <h2 style="margin-top:12px">Edge Styles</h2>
+      <div class="legend">
+        <div><span style="border-bottom:2px solid #888">&#8212;</span> relation / recordsource</div>
+        <div><span style="border-bottom:2px dashed #8250df">&#8212;</span> vba-type-ref</div>
+        <div><span style="border-bottom:2px dotted #2da44e">&#8212;</span> vba-data-ref</div>
+        <div><span style="border-bottom:2px solid #0969da">&#8212;</span> vba-open* / navigation</div>
+        <div><span style="border-bottom:2px solid #bf8700">&#8212;</span> controlsource / field</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Details</h2>
+      <pre id="details">Nothing selected.</pre>
+    </section>
+  </aside>
+
+  <script>
+    const state = {
+      graph: null,
+      network: null,
+      nodesDataSet: null,
+      edgesDataSet: null,
+      visibleGroups: new Set(),
+      labelsEnabled: true,
+      physicsEnabled: true,
+      hierarchicalEnabled: false,
+    };
+
+    const groupStyles = {
+      table:  { shape: 'database', color: { background: '#2da44e', border: '#1a7f37', highlight: { background: '#3fb950', border: '#1a7f37' }, hover: { background: '#3fb950', border: '#1a7f37' } }, font: { color: '#fff' } },
+      query:  { shape: 'diamond',  color: { background: '#0969da', border: '#0550ae', highlight: { background: '#218bff', border: '#0550ae' }, hover: { background: '#218bff', border: '#0550ae' } }, font: { color: '#fff' } },
+      form:   { shape: 'box',      color: { background: '#1a7f7a', border: '#0e5a56', highlight: { background: '#2ea9a3', border: '#0e5a56' }, hover: { background: '#2ea9a3', border: '#0e5a56' } }, font: { color: '#fff' } },
+      report: { shape: 'box',      color: { background: '#bf8700', border: '#9a6700', highlight: { background: '#d4a72c', border: '#9a6700' }, hover: { background: '#d4a72c', border: '#9a6700' } }, font: { color: '#fff' } },
+      macro:  { shape: 'hexagon',  color: { background: '#8250df', border: '#6639ba', highlight: { background: '#a371f7', border: '#6639ba' }, hover: { background: '#a371f7', border: '#6639ba' } }, font: { color: '#fff' } },
+      module: { shape: 'triangle', color: { background: '#57606a', border: '#424a53', highlight: { background: '#6e7781', border: '#424a53' }, hover: { background: '#6e7781', border: '#424a53' } }, font: { color: '#fff' } },
+      sql:    { shape: 'ellipse',  color: { background: '#54aeff', border: '#218bff', highlight: { background: '#80ccff', border: '#218bff' }, hover: { background: '#80ccff', border: '#218bff' } }, font: { color: '#000' } },
+      field:  { shape: 'dot', size: 10, color: { background: '#afb8c1', border: '#8c959f', highlight: { background: '#d0d7de', border: '#8c959f' }, hover: { background: '#d0d7de', border: '#8c959f' } } },
+    };
+
+    const groupLevels = { table: 0, query: 1, form: 2, report: 2, macro: 3, module: 4, sql: 1, field: 0 };
+
+    const edgeStyles = {
+      'relation':           { color: '#888888', dashes: false, width: 2 },
+      'recordsource':       { color: '#888888', dashes: false, width: 2 },
+      'recordsource-sql':   { color: '#888888', dashes: false, width: 2 },
+      'vba-type-ref':       { color: '#8250df', dashes: [8, 4], width: 1.5 },
+      'vba-data-ref':       { color: '#2da44e', dashes: [3, 3], width: 1.5 },
+      'vba-openform':       { color: '#0969da', dashes: false, width: 1.5 },
+      'vba-openreport':     { color: '#0969da', dashes: false, width: 1.5 },
+      'vba-openquery':      { color: '#0969da', dashes: false, width: 1.5 },
+      'vba-opentable':      { color: '#0969da', dashes: false, width: 1.5 },
+      'vba-querydefs':      { color: '#0969da', dashes: false, width: 1.5 },
+      'vba-runsql':         { color: '#0969da', dashes: false, width: 1.5 },
+      'controlsource':      { color: '#bf8700', dashes: false, width: 1 },
+      'control-expression': { color: '#bf8700', dashes: [5, 3], width: 1 },
+      'sourceobject':       { color: '#1a7f7a', dashes: false, width: 2 },
+      'query-sql-reference':{ color: '#0969da', dashes: false, width: 1.5 },
+      'sql-reference':      { color: '#54aeff', dashes: false, width: 1 },
+      'macro-openform':     { color: '#8250df', dashes: false, width: 1.5 },
+      'macro-openreport':   { color: '#8250df', dashes: false, width: 1.5 },
+      'macro-openquery':    { color: '#8250df', dashes: false, width: 1.5 },
+      'macro-opentable':    { color: '#8250df', dashes: false, width: 1.5 },
+      'macro-runsql':       { color: '#8250df', dashes: false, width: 1.5 },
+      'field-owner':        { color: '#afb8c1', dashes: false, width: 1 },
+    };
+    const defaultEdgeStyle = { color: '#aaaaaa', dashes: false, width: 1 };
+
+    function setStatus(text) {
+      document.getElementById('status').textContent = text;
+    }
+
+    function safeString(value) {
+      return value == null ? '' : String(value);
+    }
+
+    function buildSummary(graph) {
+      const summary = document.getElementById('summary');
+      const counts = {};
+      for (const node of graph.nodes) {
+        counts[node.group] = (counts[node.group] || 0) + 1;
+      }
+
+      const entries = [
+        ['Nodes', graph.nodes.length],
+        ['Edges', graph.edges.length],
+        ['Tables', counts.table || 0],
+        ['Queries', counts.query || 0],
+        ['Forms', counts.form || 0],
+        ['Reports', counts.report || 0],
+        ['Macros', counts.macro || 0],
+        ['Modules', counts.module || 0],
+        ['SQL nodes', counts.sql || 0],
+        ['Field nodes', counts.field || 0],
+      ];
+
+      summary.innerHTML = entries.map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
+    }
+
+    function buildGroupFilters(graph) {
+      const container = document.getElementById('groupFilters');
+      const groups = [...new Set(graph.nodes.map(n => n.group))].sort();
+      state.visibleGroups = new Set(groups);
+      container.innerHTML = '';
+
+      for (const group of groups) {
+        const id = `group-${group.replace(/[^a-z0-9_-]/gi, '_')}`;
+        const wrapper = document.createElement('label');
+        wrapper.className = 'inline';
+        wrapper.innerHTML = `<input id="${id}" type="checkbox" checked> ${group}`;
+        const input = wrapper.querySelector('input');
+        input.addEventListener('change', () => {
+          if (input.checked) {
+            state.visibleGroups.add(group);
+          } else {
+            state.visibleGroups.delete(group);
+          }
+          applyFilters();
+        });
+        container.appendChild(wrapper);
+      }
+    }
+
+    function normalizeNode(node) {
+      const out = { ...node };
+      out.label = safeString(node.label || node.id);
+      out.group = safeString(node.group || 'other');
+      out.title = safeString(node.title || '');
+      const gs = groupStyles[out.group];
+      out.shape = (gs && gs.shape) || 'ellipse';
+      if (gs && gs.size) out.size = gs.size;
+      if (state.hierarchicalEnabled) {
+        out.level = groupLevels[out.group] != null ? groupLevels[out.group] : 5;
+      }
+      return out;
+    }
+
+    function normalizeEdge(edge) {
+      const out = { ...edge };
+      out.label = state.labelsEnabled ? safeString(edge.label || '') : '';
+      out.title = safeString(edge.title || '');
+      out.arrows = safeString(edge.arrows || '') === 'to' ? 'to' : '';
+      out.smooth = state.hierarchicalEnabled ? { type: 'cubicBezier', forceDirection: 'vertical', roundness: 0.4 } : { type: 'dynamic' };
+      out.font = { align: 'middle', strokeWidth: 0, size: 11 };
+      const es = edgeStyles[safeString(edge.kind)] || defaultEdgeStyle;
+      out.color = { color: es.color, highlight: es.color, hover: es.color, opacity: 0.8 };
+      out.dashes = es.dashes;
+      out.width = es.width;
+      return out;
+    }
+
+    function getNetworkOptions() {
+      const opts = {
+        interaction: {
+          hover: true,
+          navigationButtons: true,
+          multiselect: true,
+        },
+        physics: {
+          enabled: state.physicsEnabled,
+          stabilization: { iterations: 400 },
+          solver: 'forceAtlas2Based',
+          forceAtlas2Based: { gravitationalConstant: -40, centralGravity: 0.005, springLength: 120, springConstant: 0.06 },
+        },
+        groups: groupStyles,
+        nodes: {
+          font: { size: 14 },
+          margin: 10,
+        },
+        edges: {
+          width: 1,
+          selectionWidth: 2,
+        },
+      };
+      if (state.hierarchicalEnabled) {
+        opts.layout = {
+          hierarchical: { enabled: true, direction: 'UD', sortMethod: 'directed', levelSeparation: 150, nodeSpacing: 180, treeSpacing: 200, blockShifting: true, edgeMinimization: true, parentCentralization: true },
+        };
+        opts.physics.solver = 'hierarchicalRepulsion';
+        opts.physics.hierarchicalRepulsion = { centralGravity: 0.0, springLength: 150, springConstant: 0.01, nodeDistance: 200, damping: 0.09 };
+      } else {
+        opts.layout = { improvedLayout: true };
+      }
+      return opts;
+    }
+
+    function createNetwork() {
+      const container = document.getElementById('network');
+      state.nodesDataSet = new vis.DataSet([]);
+      state.edgesDataSet = new vis.DataSet([]);
+
+      state.network = new vis.Network(container, {
+        nodes: state.nodesDataSet,
+        edges: state.edgesDataSet,
+      }, getNetworkOptions());
+
+      state.network.on('click', params => {
+        if (params.nodes.length) {
+          const node = state.nodesDataSet.get(params.nodes[0]);
+          document.getElementById('details').textContent = JSON.stringify(node, null, 2);
+          return;
+        }
+        if (params.edges.length) {
+          const edge = state.edgesDataSet.get(params.edges[0]);
+          document.getElementById('details').textContent = JSON.stringify(edge, null, 2);
+          return;
+        }
+        document.getElementById('details').textContent = JSON.stringify(state.graph && state.graph.meta ? state.graph.meta : {}, null, 2);
+      });
+
+      state.network.on('doubleClick', params => {
+        if (params.nodes.length) {
+          state.network.focus(params.nodes[0], { scale: 1.2, animation: true });
+        }
+      });
+    }
+
+    function applyFilters() {
+      if (!state.graph || !state.network) {
+        return;
+      }
+
+      const visibleNodes = state.graph.nodes
+        .filter(node => state.visibleGroups.has(node.group))
+        .map(normalizeNode);
+
+      const visibleNodeIds = new Set(visibleNodes.map(node => node.id));
+      const visibleEdges = state.graph.edges
+        .filter(edge => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to))
+        .map(normalizeEdge);
+
+      state.nodesDataSet.clear();
+      state.edgesDataSet.clear();
+      state.nodesDataSet.add(visibleNodes);
+      state.edgesDataSet.add(visibleEdges);
+
+      state.network.setOptions(getNetworkOptions());
+      state.network.fit({ animation: true });
+      setStatus(`Showing ${visibleNodes.length} nodes and ${visibleEdges.length} edges.`);
+    }
+
+    function loadGraph(graph) {
+      if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
+        throw new Error('Invalid graph format. Expected { nodes: [], edges: [] }.');
+      }
+
+      state.graph = graph;
+      buildSummary(graph);
+      buildGroupFilters(graph);
+      applyFilters();
+      document.getElementById('details').textContent = JSON.stringify(graph.meta || {}, null, 2);
+    }
+
+    async function tryLoadDefaultGraph() {
+      const response = await fetch('graph.json', { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} while loading graph.json`);
+      }
+      const graph = await response.json();
+      loadGraph(graph);
+      setStatus('Loaded graph.json from the same folder.');
+    }
+
+    function searchGraph() {
+      if (!state.graph || !state.network) {
+        return;
+      }
+
+      const query = document.getElementById('searchBox').value.trim().toLowerCase();
+      if (!query) {
+        state.network.unselectAll();
+        setStatus('Search box is empty.');
+        return;
+      }
+
+      const matches = state.nodesDataSet.get().filter(node => {
+        return safeString(node.label).toLowerCase().includes(query) || safeString(node.id).toLowerCase().includes(query);
+      }).map(node => node.id);
+
+      if (!matches.length) {
+        setStatus(`No visible nodes matched "${query}".`);
+        return;
+      }
+
+      state.network.selectNodes(matches);
+      state.network.fit({ nodes: matches, animation: true });
+      setStatus(`Matched ${matches.length} visible node(s).`);
+    }
+
+    document.getElementById('fileInput').addEventListener('change', async event => {
+      const file = event.target.files && event.target.files[0];
+      if (!file) {
+        return;
+      }
+
+      try {
+        const text = await file.text();
+        const graph = JSON.parse(text);
+        loadGraph(graph);
+        setStatus(`Loaded ${file.name}.`);
+      } catch (error) {
+        setStatus(`Failed to load file: ${error.message}`);
+      }
+    });
+
+    document.getElementById('reloadButton').addEventListener('click', async () => {
+      try {
+        await tryLoadDefaultGraph();
+      } catch (error) {
+        setStatus(`Could not load graph.json automatically: ${error.message}`);
+      }
+    });
+
+    document.getElementById('searchButton').addEventListener('click', searchGraph);
+    document.getElementById('searchBox').addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        searchGraph();
+      }
+    });
+
+    document.getElementById('fitButton').addEventListener('click', () => {
+      if (state.network) {
+        state.network.fit({ animation: true });
+      }
+    });
+
+    document.getElementById('physicsToggle').addEventListener('change', event => {
+      state.physicsEnabled = event.target.checked;
+      if (state.network) {
+        state.network.setOptions(getNetworkOptions());
+      }
+    });
+
+    document.getElementById('hierarchicalToggle').addEventListener('change', event => {
+      state.hierarchicalEnabled = event.target.checked;
+      if (state.network) {
+        state.network.destroy();
+        createNetwork();
+        applyFilters();
+      }
+    });
+
+    document.getElementById('labelsToggle').addEventListener('change', event => {
+      state.labelsEnabled = event.target.checked;
+      applyFilters();
+    });
+
+    createNetwork();
+    tryLoadDefaultGraph().catch(error => {
+      setStatus(`Auto-load skipped: ${error.message}`);
+    });
+  </script>
+</body>
+</html>
