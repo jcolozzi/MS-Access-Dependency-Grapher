@@ -37,6 +37,44 @@ $script:Warnings = New-Object 'System.Collections.Generic.List[object]'
 $script:Nodes = New-Object 'System.Collections.Generic.List[object]'
 $script:Edges = New-Object 'System.Collections.Generic.List[object]'
 $script:KnownTableFields = @{}
+$script:ProcIndex = @{}           # proc_name_lower → [List[string]] of module node IDs
+$script:ProcCallRe = $null        # compiled regex for bare proc calls (built by Build-ProcIndex)
+$script:ModuleCodeCache = @{}     # module_name → code text (read once, reused)
+
+# DAO field type number → friendly name (for field node metadata)
+$script:DAO_FIELD_TYPE = @{
+    1 = 'Boolean';  2 = 'Byte';     3 = 'Integer';  4 = 'Long'
+    5 = 'Currency'; 6 = 'Single';   7 = 'Double';   8 = 'Date/Time'
+    10 = 'Text';    11 = 'OLE';     12 = 'Memo';    15 = 'GUID'
+    16 = 'BigInt';  20 = 'Decimal'
+}
+
+# Built-in VBA / Access function names — excluded from cross-module call detection.
+$script:VBA_BUILTIN_NAMES = [System.Collections.Generic.HashSet[string]]::new(
+    [string[]]@(
+        'asc','ascw','chr','chrw','format','instr','instrb','instrrev','join',
+        'lcase','left','len','lenb','ltrim','mid','replace','right','space',
+        'split','str','strcomp','strconv','strreverse','trim','rtrim','ucase','val','string',
+        'cbool','cbyte','ccur','cdate','cdbl','cdec','cint','clng','clnglng','clngptr','csng','cstr','cvar','cverr',
+        'isarray','isdate','isempty','iserror','ismissing','isnull','isnumeric','isobject','typename','vartype',
+        'abs','atn','cos','exp','fix','int','log','rnd','round','sgn','sin','sqr','tan',
+        'date','dateadd','datediff','datepart','dateserial','datevalue','day','formatdatetime',
+        'hour','minute','month','monthname','now','second','time','timeserial','timevalue','timer',
+        'weekday','weekdayname','year',
+        'inputbox','msgbox',
+        'curdir','dir','eof','filecopy','filedatetime','filelen','freefile','getattr','loc','lof','setattr',
+        'array','erase','filter','lbound','ubound',
+        'appactivate','beep','command','doevents','environ','sendkeys','shell',
+        'error',
+        'callbyname','createobject','getobject',
+        'deletesetting','getsetting','savesetting',
+        'hex','oct',
+        'choose','iif','nz','partition','qbcolor','randomize','rgb',
+        'davg','dcount','dfirst','dlast','dlookup','dmax','dmin','dstdev','dstdevp','dsum','dvar','dvarp',
+        'codedb','currentdb','currentuser','eval','guidfromstring','hyperlinkpart','stringfromguid','syscmd'
+    ),
+    [System.StringComparer]::OrdinalIgnoreCase
+)
 
 function Add-WarningEntry {
     param(
@@ -827,10 +865,88 @@ function Add-FormOrReportEdgesFromExport {
                 }
             }
         }
+
+        # RowSource (ComboBox / ListBox data binding)
+        if ($control.Properties.ContainsKey('RowSource')) {
+            $rsValue = [string]$control.Properties['RowSource']
+            if (-not [string]::IsNullOrWhiteSpace($rsValue)) {
+                $rsTargets = @(Get-TargetsByName -Name $rsValue -TargetTable $script:DataNameTargets)
+                if ($rsTargets.Count -gt 0) {
+                    Add-Edge -From $objectId -To $rsTargets[0].id -Label 'RowSource' -Kind 'rowsource' -Arrows 'to' -Meta @{
+                        controlName = $controlName
+                        controlType = $controlType
+                        rowSource   = $rsValue
+                    }
+                }
+                elseif (Is-LikelySql -Text $rsValue) {
+                    $rsSqlNode = Ensure-SqlNode -SqlText $rsValue -Origin ("RowSource:{0}" -f $controlName) -SqlFolder $SqlFolder
+                    Add-Edge -From $objectId -To $rsSqlNode.id -Label 'RowSource' -Kind 'rowsource' -Arrows 'to' -Meta @{
+                        controlName = $controlName
+                        controlType = $controlType
+                    }
+                    Add-SqlReferenceEdges -SqlText $rsValue -FromNodeId $rsSqlNode.id -RelationKind 'sql-reference' -SqlFolder $SqlFolder -KnownDataNames $KnownDataNames
+                }
+            }
+        }
     }
 
     if (-not $DisableCodeHeuristics) {
         Add-CodeHeuristicEdges -OwnerNodeId $objectId -OwnerGroup $ObjectGroup -OwnerName $ObjectName -Text $parse.Code -SqlFolder $SqlFolder -KnownDataNames $KnownDataNames
+    }
+}
+
+function Build-ProcIndex {
+    <#
+    .SYNOPSIS
+        Index all public VBA procedures across standalone modules for cross-module
+        call detection. Populates $script:ProcIndex and $script:ProcCallRe.
+    #>
+
+    $procDeclRe = '(?im)^\s*(?:Public\s+)?(?:Sub|Function|Property\s+(?:Get|Let|Set))\s+(\w+)'
+    $privateProcRe = '(?im)^\s*Private\s+(?:Sub|Function|Property\s+(?:Get|Let|Set))\s+(\w+)'
+
+    foreach ($node in $script:NodeIndex.Values) {
+        if ($node.group -ne 'module') { continue }
+        $rawPath = $node.meta.rawPath
+        if (-not $rawPath -or -not (Test-Path -LiteralPath $rawPath)) { continue }
+
+        $code = Get-Content -LiteralPath $rawPath -Raw
+        if ([string]::IsNullOrWhiteSpace($code)) { continue }
+        $script:ModuleCodeCache[$node.label] = $code
+
+        # Collect private procedure names to exclude
+        $privateNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($m in [regex]::Matches($code, $privateProcRe)) {
+            [void]$privateNames.Add($m.Groups[1].Value)
+        }
+
+        # Index all public procedures
+        $nodeId = $node.id
+        foreach ($m in [regex]::Matches($code, $procDeclRe)) {
+            $procName = $m.Groups[1].Value
+            $pnameLower = $procName.ToLowerInvariant()
+            if ($privateNames.Contains($procName)) { continue }
+            if ($script:VBA_BUILTIN_NAMES.Contains($pnameLower)) { continue }
+            if ($pnameLower.Length -lt 2) { continue }
+
+            if (-not $script:ProcIndex.ContainsKey($pnameLower)) {
+                $script:ProcIndex[$pnameLower] = New-Object 'System.Collections.Generic.List[string]'
+            }
+            $script:ProcIndex[$pnameLower].Add($nodeId)
+        }
+    }
+
+    # Build compiled regex for call detection
+    $procNames = @($script:ProcIndex.Keys | Sort-Object { $_.Length } -Descending)
+    if ($procNames.Count -gt 0) {
+        $escaped = $procNames | ForEach-Object { [regex]::Escape($_) }
+        $alt = $escaped -join '|'
+        # Match bare calls: ProcName( — but NOT object.ProcName(
+        # Also match: Call ProcName
+        $script:ProcCallRe = [regex]::new(
+            "(?<![\.\w])(?:$alt)\s*\(|\bCall\s+(?:$alt)\b",
+            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+        )
     }
 }
 
@@ -854,7 +970,8 @@ function Add-CodeHeuristicEdges {
         @{ regex = '(?is)\bDoCmd\.OpenQuery\s+"(?<name>(?:[^"]|"")+)"'; group = 'query'; label = 'OpenQuery'; kind = 'vba-openquery' },
         @{ regex = '(?is)\bDoCmd\.OpenTable\s+"(?<name>(?:[^"]|"")+)"'; group = 'table'; label = 'OpenTable'; kind = 'vba-opentable' },
         @{ regex = '(?is)\bCurrentDb\s*\(\s*\)\s*\.\s*QueryDefs\s*\(\s*"(?<name>(?:[^"]|"")+)"\s*\)'; group = 'query'; label = 'QueryDefs'; kind = 'vba-querydefs' },
-        @{ regex = '(?is)\bDBEngine\s*\(\s*0\s*\)\s*\(\s*0\s*\)\s*\.\s*QueryDefs\s*\(\s*"(?<name>(?:[^"]|"")+)"\s*\)'; group = 'query'; label = 'QueryDefs'; kind = 'vba-querydefs' }
+        @{ regex = '(?is)\bDBEngine\s*\(\s*0\s*\)\s*\(\s*0\s*\)\s*\.\s*QueryDefs\s*\(\s*"(?<name>(?:[^"]|"")+)"\s*\)'; group = 'query'; label = 'QueryDefs'; kind = 'vba-querydefs' },
+        @{ regex = '(?is)\bDoCmd\.RunMacro\s+"(?<name>(?:[^"]|"")+)"'; group = 'macro'; label = 'RunMacro'; kind = 'vba-runmacro' }
     )
 
     foreach ($pattern in $patterns) {
@@ -940,6 +1057,27 @@ function Add-CodeHeuristicEdges {
                         $seenDataEdges[$edgeKey] = $true
                         Add-Edge -From $OwnerNodeId -To $target.id -Label 'uses data' -Kind 'vba-data-ref' -Arrows 'to' -Meta @{ name = $name }
                     }
+                }
+            }
+        }
+    }
+
+    # Cross-module procedure calls (bare FuncName( or Call SubName)
+    if ($null -ne $script:ProcCallRe) {
+        $seenCallEdges = @{}
+        foreach ($match in $script:ProcCallRe.Matches($Text)) {
+            $matched = $match.Value
+            # Strip leading 'Call ' if present, trailing '(' or whitespace
+            $procName = ($matched -replace '(?i)^\s*Call\s+', '').TrimEnd('( ')
+            $pnameLower = $procName.ToLowerInvariant()
+            $targetIds = $script:ProcIndex[$pnameLower]
+            if ($null -eq $targetIds) { continue }
+            foreach ($tid in $targetIds) {
+                if ($tid -eq $OwnerNodeId) { continue }  # skip self-edges
+                $edgeKey = "$OwnerNodeId->$($tid):call:$pnameLower"
+                if (-not $seenCallEdges.ContainsKey($edgeKey)) {
+                    $seenCallEdges[$edgeKey] = $true
+                    Add-Edge -From $OwnerNodeId -To $tid -Label 'calls' -Kind 'vba-call' -Arrows 'to' -Meta @{ procedure = $procName }
                 }
             }
         }
@@ -1125,7 +1263,9 @@ try {
 
         if ($FieldNodeMode -eq 'AllTableFields') {
             foreach ($field in $tableDef.Fields) {
-                Ensure-FieldNode -OwnerNodeId $tableNodeId -OwnerGroup 'table' -OwnerName $tableName -FieldName ([string]$field.Name) -Verified $true -DataType ([string]$field.Type) | Out-Null
+                $fieldType = try { [int]$field.Type } catch { -1 }
+                $fieldTypeName = if ($script:DAO_FIELD_TYPE.ContainsKey($fieldType)) { $script:DAO_FIELD_TYPE[$fieldType] } else { "Type$fieldType" }
+                Ensure-FieldNode -OwnerNodeId $tableNodeId -OwnerGroup 'table' -OwnerName $tableName -FieldName ([string]$field.Name) -Verified $true -DataType $fieldTypeName | Out-Null
             }
         }
     }
@@ -1305,12 +1445,22 @@ try {
     }
 
     if (-not $DisableCodeHeuristics) {
+        Write-Progress -Activity 'Access Graph Export' -Status 'Building procedure index...' -PercentComplete 88
+        Build-ProcIndex
+    }
+
+    if (-not $DisableCodeHeuristics) {
         Write-Progress -Activity 'Access Graph Export' -Status 'Analyzing module code...' -PercentComplete 90
         foreach ($module in $allModules) {
             $name = [string]$module.Name
-            $rawPath = $script:NodeIndex[(Get-ObjectId -Group 'module' -Name $name)].meta.rawPath
-            if ($rawPath -and (Test-Path -LiteralPath $rawPath)) {
-                $text = Get-Content -LiteralPath $rawPath -Raw
+            $text = $script:ModuleCodeCache[$name]
+            if (-not $text) {
+                $rawPath = $script:NodeIndex[(Get-ObjectId -Group 'module' -Name $name)].meta.rawPath
+                if ($rawPath -and (Test-Path -LiteralPath $rawPath)) {
+                    $text = Get-Content -LiteralPath $rawPath -Raw
+                }
+            }
+            if ($text) {
                 Add-CodeHeuristicEdges -OwnerNodeId (Get-ObjectId -Group 'module' -Name $name) -OwnerGroup 'module' -OwnerName $name -Text $text -SqlFolder (Join-Path $rawDir 'sql') -KnownDataNames $knownDataNames
             }
         }

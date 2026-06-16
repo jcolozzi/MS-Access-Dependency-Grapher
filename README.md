@@ -27,12 +27,15 @@ Export a Microsoft Access database to `graph.json` and explore it in an interact
   - bound `ControlSource`
   - subform or subreport `SourceObject`
   - `LinkMasterFields` and `LinkChildFields`
+  - `RowSource` on ComboBox/ListBox controls (table/query binding or inline SQL)
   - calculated control expressions (`=DLookup(...)`, etc.)
 - VBA heuristics from form code, report code, and modules:
   - `DoCmd.OpenForm`, `DoCmd.OpenReport`, `DoCmd.OpenQuery`, `DoCmd.OpenTable`
+  - `DoCmd.RunMacro` (calls to named macros)
   - `DoCmd.RunSQL` (extracts inline SQL and scans for table/query references)
   - `CurrentDb().QueryDefs("...")`, `DBEngine(0)(0).QueryDefs("...")`
   - `.SourceObject = "FormOrReportName"` (dynamic subform/subreport binding at runtime)
+  - cross-module procedure calls (`Sub`/`Function`/`Property` — indexed with `Build-ProcIndex`, filtered against 87 built-in VBA/Access names to avoid false positives)
 - VBA type-dependency edges:
   - `Dim x As ClassName` / `Function() As ClassName`
   - `Set x = New ClassName`
@@ -60,6 +63,7 @@ The export shows a PowerShell progress bar with per-item detail for large phases
 | Form edges | Analyzing form edges (N/M): *name* | 65–80 |
 | Report edges | Analyzing report edges... | 82 |
 | Macro edges | Analyzing macro edges... | 87 |
+| Proc index | Building procedure index... | 88 |
 | Module code | Analyzing module code... | 90 |
 | Output | Writing graph output... | 95 |
 
@@ -161,8 +165,11 @@ Edges are color-coded and styled by their relationship type:
 | vba-type-ref           | Dashed | Purple |
 | vba-data-ref           | Dotted | Green  |
 | vba-open* / navigation | Solid  | Blue   |
+| vba-runmacro           | Solid  | Purple |
+| vba-call               | Dashed | Gray   |
 | vba-sourceobject       | Dashed | Teal   |
 | controlsource / field  | Solid  | Gold   |
+| rowsource              | Dashed | Gold   |
 | sourceobject           | Solid  | Teal   |
 | macro-*                | Solid  | Purple |
 
@@ -227,7 +234,7 @@ Open `out\index.html` in a browser.
 
 ### Examples
 
-Create field nodes for every table field:
+Create field nodes for every table field (uses friendly DAO type names like `Text`, `Long`, `DateTime`):
 
 ```powershell
 .\Export-AccessGraph.ps1 -DatabasePath '.\YourDb.accdb' -FieldNodeMode AllTableFields
@@ -288,6 +295,9 @@ Disable macro heuristics:
 | `vba-querydefs`      | `CurrentDb().QueryDefs("...")`               |
 | `vba-runsql`         | `DoCmd.RunSQL`                               |
 | `vba-sourceobject`   | VBA `.SourceObject = "..."` assignment        |
+| `vba-runmacro`       | `DoCmd.RunMacro`                              |
+| `vba-call`           | Cross-module procedure call                   |
+| `rowsource`          | Control RowSource → table/query/SQL           |
 | `macro-openform`     | Macro OpenForm action                        |
 | `macro-openreport`   | Macro OpenReport action                      |
 | `macro-openquery`    | Macro OpenQuery action                       |

@@ -326,6 +326,20 @@
     .detail-card .focus-btn:hover { background: var(--panel); }
     .detail-card .focus-btn.active { background: #0969da; color: #fff; border-color: #0969da; }
 
+    /* --- Filter toggle links --- */
+    .filter-toggle-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 11px;
+    }
+    .filter-toggle-bar a {
+      cursor: pointer;
+      color: var(--link);
+      text-decoration: none;
+    }
+    .filter-toggle-bar a:hover { text-decoration: underline; }
+
     /* --- Edge filter section --- */
     .edge-filter-list {
       display: grid;
@@ -404,6 +418,7 @@
     <details class="panel" open>
       <summary>Filters</summary>
       <div class="panel-body">
+        <div class="filter-toggle-bar"><a id="groupSelectAll">Select all</a> <a id="groupDeselectAll">Deselect all</a></div>
         <div id="groupFilters" class="group-list"></div>
         <div class="hint">Only nodes with checked groups are shown. Edges are shown only when both endpoints are visible.</div>
       </div>
@@ -412,6 +427,7 @@
     <details class="panel" open>
       <summary>Edge Filters</summary>
       <div class="panel-body">
+        <div class="filter-toggle-bar"><a id="edgeSelectAll">Select all</a> <a id="edgeDeselectAll">Deselect all</a></div>
         <div id="edgeKindFilters" class="edge-filter-list"></div>
         <div class="hint">Toggle edge kinds. Nodes stay in place.</div>
       </div>
@@ -501,6 +517,9 @@
       'macro-opentable':    { color: '#8250df', dashes: false, width: 1.5 },
       'macro-runsql':       { color: '#8250df', dashes: false, width: 1.5 },
       'vba-sourceobject':   { color: '#1a7f7a', dashes: [6, 3], width: 2 },
+      'vba-runmacro':       { color: '#8250df', dashes: false, width: 1.5 },
+      'vba-call':           { color: '#57606a', dashes: [4, 4], width: 1.5 },
+      'rowsource':          { color: '#bf8700', dashes: [6, 3], width: 1.5 },
       'field-owner':        { color: '#afb8c1', dashes: false, width: 1 },
     };
     const defaultEdgeStyle = { color: '#aaaaaa', dashes: false, width: 1 };
@@ -967,6 +986,18 @@
         });
         container.appendChild(wrapper);
       }
+
+      // Select / Deselect all
+      document.getElementById('groupSelectAll').onclick = () => {
+        state.visibleGroups = new Set(groups);
+        container.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true);
+        saveFilterState(); applyFilters();
+      };
+      document.getElementById('groupDeselectAll').onclick = () => {
+        state.visibleGroups.clear();
+        container.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+        saveFilterState(); applyFilters();
+      };
     }
 
     function buildEdgeKindFilters(graph) {
@@ -1006,6 +1037,18 @@
         });
         container.appendChild(wrapper);
       }
+
+      // Select / Deselect all
+      document.getElementById('edgeSelectAll').onclick = () => {
+        state.visibleEdgeKinds = new Set(kinds);
+        container.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true);
+        saveFilterState(); applyFilters();
+      };
+      document.getElementById('edgeDeselectAll').onclick = () => {
+        state.visibleEdgeKinds.clear();
+        container.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+        saveFilterState(); applyFilters();
+      };
     }
 
     function normalizeNode(node) {
