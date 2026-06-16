@@ -322,7 +322,7 @@ The viewer saves the following to `localStorage`:
 
 Filter state is restored on the next visit so only previously-visible groups and edge kinds are rendered, keeping load times fast for large graphs.
 
-## Screenshots
+## Screenshots - Northwind 2.0
 
 ### Dependency Graph - Object Filters and Edge Filters
 
