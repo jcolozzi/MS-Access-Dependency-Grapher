@@ -324,6 +324,6 @@ Filter state is restored on the next visit so only previously-visible groups and
 
 ## Screenshots
 
-![Dependency Graph](.\images\DependencyGraph.png)
-![Summary Legend](.\images\SummaryLegend.png)
-![Focus Neighborhood](.\images\FocusNeighborhood.png)
+![Dependency Graph](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/DependencyGraph.png)
+![Summary Legend](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/SummaryLegend.png)
+![Focus Neighborhood](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/FocusNeighborhood.png)
