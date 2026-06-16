@@ -1,4 +1,4 @@
-# Access Graph Starter
+# Microsoft Access Dependency Grapher
 
 Export a Microsoft Access database to `graph.json` and explore it in an interactive HTML node graph.
 
