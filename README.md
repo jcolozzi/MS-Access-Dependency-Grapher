@@ -324,6 +324,14 @@ Filter state is restored on the next visit so only previously-visible groups and
 
 ## Screenshots
 
+### Dependency Graph - Object Filters and Edge Filters
+
 ![Dependency Graph](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/DependencyGraph.png)
+
+### Summary / Legend
+
 ![Summary Legend](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/SummaryLegend.png)
+
+### Object Details - Focus Neighborhood
+
 ![Focus Neighborhood](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/FocusNeighborhood.png)
