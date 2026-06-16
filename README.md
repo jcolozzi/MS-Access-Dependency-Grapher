@@ -335,3 +335,7 @@ Filter state is restored on the next visit so only previously-visible groups and
 ### Object Details - Focus Neighborhood
 
 ![Focus Neighborhood](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/FocusNeighborhood.png)
+
+### Light / Dark Mode
+
+![Focus Neighborhood](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/Light-Dark.png)
