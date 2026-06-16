@@ -321,3 +321,9 @@ The viewer saves the following to `localStorage`:
 | `access-graph-edge-kinds` | Which edge kinds are checked in the Edge Filters panel |
 
 Filter state is restored on the next visit so only previously-visible groups and edge kinds are rendered, keeping load times fast for large graphs.
+
+## Screenshots
+
+![Dependency Graph](.\images\DependencyGraph.png)
+![Summary Legend](.\images\SummaryLegend.png)
+![Focus Neighborhood](.\images\FocusNeighborhood.png)
