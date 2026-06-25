@@ -433,3 +433,21 @@ Set-AuthenticodeSignature -FilePath .\Export-AccessGraph.ps1 -Certificate $cert
 > **Note:** A self-signed certificate is only trusted on machines where you have installed it into the trusted stores (step 2). To run the signed script on other PCs, export the public certificate (`Export-Certificate`) and import it into the *Trusted Root* and *Trusted Publishers* stores there. For wider distribution outside a managed environment, use a certificate from a public Certificate Authority instead.
 
 **Re-sign after edits.** Any change to the file invalidates the signature, so re-run `Set-AuthenticodeSignature` (step 3) after editing the script.
+
+## Screenshots - Northwind 2.0
+
+### Dependency Graph - Object Filters and Edge Filters
+
+![Dependency Graph](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/DependencyGraph.png)
+
+### Summary / Legend
+
+![Summary Legend](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/SummaryLegend.png)
+
+### Object Details - Focus Neighborhood
+
+![Focus Neighborhood](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/FocusNeighborhood.png)
+
+### Light / Dark Mode
+
+![Focus Neighborhood](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/Light-Dark.png)
