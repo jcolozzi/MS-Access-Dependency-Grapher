@@ -450,4 +450,8 @@ Set-AuthenticodeSignature -FilePath .\Export-AccessGraph.ps1 -Certificate $cert
 
 ### Light / Dark Mode
 
-![Focus Neighborhood](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/Light-Dark.png)
+![Light Dark Mode](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/Light-Dark.png)
+
+### Reports
+
+![Reports](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/Reports.png)
