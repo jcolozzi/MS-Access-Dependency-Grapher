@@ -1,9 +1,8 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [string]$DatabasePath,
 
-    [string]$OutDir = ".\access-graph-out",
+    [string]$OutDir,
 
     [ValidateSet('None', 'ReferencedOnly', 'AllTableFields')]
     [string]$FieldNodeMode = 'ReferencedOnly',
@@ -11,6 +10,8 @@ param(
     [switch]$DisableCodeHeuristics,
 
     [switch]$DisableMacroHeuristics,
+
+    [switch]$NestInNamedFolder,
 
     [switch]$SkipViewerCopy
 )
@@ -322,7 +323,9 @@ function Save-TextObject {
         }
     }
     catch {
-        Add-WarningEntry -Code 'SaveAsTextFailed' -Message ("SaveAsText failed for object '{0}': {1}" -f $Name, $_.Exception.Message) -Meta @{ name = $Name; type = $Type; folder = $Folder }
+        $errMsg = $_.Exception.Message
+        $objGroup = switch ($Type) { 0 { 'table' } 1 { 'query' } 2 { 'form' } 3 { 'report' } 4 { 'macro' } 5 { 'module' } default { '' } }
+        Add-WarningEntry -Code 'SaveAsTextFailed' -Message ("SaveAsText failed for object '{0}': {1}" -f $Name, $errMsg) -Meta @{ owner = $Name; group = $objGroup; name = $Name; type = $Type; folder = $Folder }
         return [pscustomobject]@{
             path = $null
             hash = $null
@@ -800,7 +803,7 @@ function Add-FormOrReportEdgesFromExport {
     $parse = Get-AccessExportParse -Path $RawPath
     $designRoot = $parse.DesignRoot
     if ($null -eq $designRoot) {
-        Add-WarningEntry -Code 'DesignRootMissing' -Message ("No design root found while parsing {0} '{1}'." -f $ObjectGroup, $ObjectName) -Meta @{ path = $RawPath }
+        Add-WarningEntry -Code 'DesignRootMissing' -Message ("No design root found while parsing {0} '{1}'." -f $ObjectGroup, $ObjectName) -Meta @{ owner = $ObjectName; group = $ObjectGroup; path = $RawPath }
         return
     }
 
@@ -1185,8 +1188,77 @@ function Copy-ViewerIfPresent {
     }
 }
 
+function Select-AccessDatabaseFile {
+    param([string]$Title = 'Select an Access database to graph')
+
+    $filter = 'Access Databases (*.accdb;*.mdb;*.accde;*.mde)|*.accdb;*.mdb;*.accde;*.mde|All files (*.*)|*.*'
+
+    $pickerScript = {
+        param($Filter, $Title)
+        Add-Type -AssemblyName System.Windows.Forms
+        $dialog = New-Object System.Windows.Forms.OpenFileDialog
+        $dialog.Filter = $Filter
+        $dialog.Title = $Title
+        $dialog.Multiselect = $false
+        $dialog.CheckFileExists = $true
+        $dialog.RestoreDirectory = $true
+        if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $dialog.FileName
+        }
+    }
+
+    # OpenFileDialog requires an STA thread; PowerShell 7 defaults to MTA.
+    if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -eq [System.Threading.ApartmentState]::STA) {
+        return (& $pickerScript $filter $Title)
+    }
+
+    $runspace = [runspacefactory]::CreateRunspace()
+    $runspace.ApartmentState = 'STA'
+    $runspace.ThreadOptions = 'ReuseThread'
+    $runspace.Open()
+    try {
+        $ps = [powershell]::Create()
+        $ps.Runspace = $runspace
+        [void]$ps.AddScript($pickerScript).AddArgument($filter).AddArgument($Title)
+        $result = $ps.Invoke()
+        $ps.Dispose()
+        if ($result -and $result.Count -gt 0) {
+            return [string]$result[0]
+        }
+        return $null
+    }
+    finally {
+        $runspace.Close()
+        $runspace.Dispose()
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($DatabasePath)) {
+    Write-Host 'No database path provided - opening file picker...'
+    $DatabasePath = Select-AccessDatabaseFile
+    if ([string]::IsNullOrWhiteSpace($DatabasePath)) {
+        Write-Host 'No database selected. Exiting.'
+        return
+    }
+    Write-Host ('Selected database: ' + $DatabasePath)
+}
+
 $resolvedDatabasePath = Resolve-Path -LiteralPath $DatabasePath
 $databaseFullPath = $resolvedDatabasePath.Path
+
+# When -OutDir is not specified, create an output folder next to the database.
+# With -NestInNamedFolder, the output is placed inside a subfolder named after
+# the database (e.g. example.accdb -> <db folder>\example\access-graph-out).
+if ([string]::IsNullOrWhiteSpace($OutDir)) {
+    $dbParent = Split-Path -Parent $databaseFullPath
+    if ($NestInNamedFolder) {
+        $dbName = [System.IO.Path]::GetFileNameWithoutExtension($databaseFullPath)
+        $OutDir = Join-Path (Join-Path $dbParent $dbName) 'access-graph-out'
+    }
+    else {
+        $OutDir = Join-Path $dbParent 'access-graph-out'
+    }
+}
 
 # Resolve OutDir to absolute path so COM SaveAsText receives full paths
 Ensure-Directory -Path $OutDir
@@ -1242,7 +1314,7 @@ try {
                 [void]$fieldSet.Add([string]$field.Name)
             }
         } catch {
-            Add-WarningEntry -Code 'FieldEnumFailed' -Message ("Could not enumerate fields for table '{0}': {1}" -f $tableName, $_.Exception.Message)
+            Add-WarningEntry -Code 'FieldEnumFailed' -Message ("Could not enumerate fields for table '{0}': {1}" -f $tableName, $_.Exception.Message) -Meta @{ owner = $tableName; group = 'table' }
         }
 
         # SaveAsText does not support acTable (type 0); skip export for tables
@@ -1420,7 +1492,7 @@ try {
         try {
             Add-FormOrReportEdgesFromExport -ObjectGroup 'form' -ObjectName $name -RawPath $rawPath -SqlFolder (Join-Path $rawDir 'sql') -KnownDataNames $knownDataNames
         } catch {
-            Add-WarningEntry -Code 'FormEdgeParseFailed' -Message ("Failed to parse form edges for '{0}': {1}" -f $name, $_.Exception.Message)
+            Add-WarningEntry -Code 'FormEdgeParseFailed' -Message ("Failed to parse form edges for '{0}': {1}" -f $name, $_.Exception.Message) -Meta @{ owner = $name; group = 'form' }
         }
     }
 
@@ -1431,7 +1503,7 @@ try {
         try {
             Add-FormOrReportEdgesFromExport -ObjectGroup 'report' -ObjectName $name -RawPath $rawPath -SqlFolder (Join-Path $rawDir 'sql') -KnownDataNames $knownDataNames
         } catch {
-            Add-WarningEntry -Code 'ReportEdgeParseFailed' -Message ("Failed to parse report edges for '{0}': {1}" -f $name, $_.Exception.Message)
+            Add-WarningEntry -Code 'ReportEdgeParseFailed' -Message ("Failed to parse report edges for '{0}': {1}" -f $name, $_.Exception.Message) -Meta @{ owner = $name; group = 'report' }
         }
     }
 

@@ -103,16 +103,19 @@ All sidebar sections are collapsible accordions. Click any section header to exp
 | **Summary** | Collapsed | Node and edge counts by type |
 | **Legend** | Collapsed | Visual key: shapes and colors for each node group |
 | **Details** | Open | Rich detail card for the selected node or edge |
+| **Reports** | Collapsed | Ten collapsible analysis reports (see [Reports panel](#reports-panel)) |
 
 The sidebar can be collapsed entirely with the **☰** button. The collapsed state persists across sessions via localStorage.
 
 ### Node interaction
 
-- **Click** a node to see its details in the sidebar
+- **Click** a node to see its details in the sidebar and **pin** a popup card beside it that stays open and follows the node as you pan or zoom
 - **Double-click** a node to zoom and focus on it
 - **Hover** over a node to see a rich tooltip with type-specific fields, connection summary, and expandable internals
 - **Ctrl+click** to multi-select nodes
 - **Focus Neighborhood** button in the details panel dims everything except the selected node and its direct neighbors
+
+The pinned popup is dismissed by clicking its **✕** button, clicking an edge, clicking empty canvas space, or loading a new graph.
 
 ### Details panel
 
@@ -127,6 +130,23 @@ When an **edge** is selected, the panel shows:
 - edge kind badge and label
 - clickable From/To node links
 - edge metadata
+
+### Reports panel
+
+The **Reports** panel (collapsed by default) holds ten on-demand analysis reports, each a collapsible sub-section that populates when a graph is loaded. Report rows that reference a node are clickable — selecting one focuses that node in the graph.
+
+| Report | What it surfaces |
+|--------|------------------|
+| **⚠ Broken Objects** | Warnings emitted during export (`graph.meta.warnings`), with the owning object and group |
+| **Orphan Candidates** | Non-field nodes with no inbound edges (potentially unused objects) |
+| **Inline SQL Inventory** | All inline-SQL nodes with their origin and a SQL preview |
+| **Linked Table Inventory** | Linked tables with their connection string, source table, and field count |
+| **High Fan-In Objects** | Objects ranked by number of inbound edges (most depended-upon) |
+| **Duplicate Inline SQL** | Inline-SQL nodes referenced by two or more consumers |
+| **Unverified Field Bindings** | Field bindings the extractor could not verify against a real field |
+| **Circular Dependencies** | Dependency cycles (strongly-connected components) between objects |
+| **Complexity Hotspots** | Objects ranked by raw export size |
+| **Tables Without Relationships** | Tables not participating in any relationship edge |
 
 ### Tooltips
 
@@ -192,6 +212,22 @@ New-Object -ComObject Access.Application
 
 ## Typical usage
 
+### No arguments (file picker)
+
+Run the script with no arguments and a file picker opens to select an Access database. The output is written to an `access-graph-out` folder created in the **same location as the selected database**.
+
+```powershell
+.\Export-AccessGraph.ps1
+```
+
+Add `-NestInNamedFolder` to nest the output one level deeper, inside a folder named after the database. Picking `example.accdb` produces `example\access-graph-out`:
+
+```powershell
+.\Export-AccessGraph.ps1 -NestInNamedFolder
+```
+
+### With arguments
+
 Open PowerShell in this folder and run:
 
 ```powershell
@@ -225,8 +261,9 @@ Open `out\index.html` in a browser.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `-DatabasePath` | *(required)* | Path to the `.accdb` or `.mdb` file |
-| `-OutDir` | `.\access-graph-out` | Output directory |
+| `-DatabasePath` | *(file picker)* | Path to the `.accdb` or `.mdb` file. If omitted, a file picker opens to select one. |
+| `-OutDir` | `access-graph-out` beside the database | Output directory. If omitted, an `access-graph-out` folder is created in the same location as the database. |
+| `-NestInNamedFolder` | off | Place the output inside a subfolder named after the database. e.g. picking `example.accdb` creates `example\access-graph-out`. Ignored when `-OutDir` is specified. |
 | `-FieldNodeMode` | `ReferencedOnly` | `None`, `ReferencedOnly`, or `AllTableFields` |
 | `-DisableCodeHeuristics` | off | Skip VBA code analysis |
 | `-DisableMacroHeuristics` | off | Skip macro analysis |
@@ -322,20 +359,77 @@ The viewer saves the following to `localStorage`:
 
 Filter state is restored on the next visit so only previously-visible groups and edge kinds are rendered, keeping load times fast for large graphs.
 
-## Screenshots - Northwind 2.0
+## Troubleshooting
 
-### Dependency Graph - Object Filters and Edge Filters
+### "Running scripts is disabled on this system" / having to use `Bypass`
 
-![Dependency Graph](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/DependencyGraph.png)
+If the script only runs when you set the execution policy to `Bypass`, the cause is almost always the **Mark of the Web (MOTW)** — not the script's contents. When `Export-AccessGraph.ps1` arrives via download, email, or a network share, Windows tags it with a `Zone.Identifier` alternate data stream marking it "from the Internet." Under the `RemoteSigned` policy, any script flagged that way must be digitally signed, so it is blocked. `Bypass` ignores the flag entirely, which is why it works.
 
-### Summary / Legend
+You can keep `RemoteSigned` and still run the script in any of three ways.
 
-![Summary Legend](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/SummaryLegend.png)
+#### Option 1 — Unblock the file (simplest)
 
-### Object Details - Focus Neighborhood
+Removes the MOTW tag. Run once per copy of the file:
 
-![Focus Neighborhood](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/FocusNeighborhood.png)
+```powershell
+Unblock-File -Path .\Export-AccessGraph.ps1
+```
 
-### Light / Dark Mode
+Files run directly from a UNC/network path can still be treated as "remote" even after unblocking. If unblocking alone doesn't help, copy the script to a local folder first:
 
-![Focus Neighborhood](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/Light-Dark.png)
+```powershell
+Copy-Item '.\Export-AccessGraph.ps1' "$env:USERPROFILE\Scripts\"
+Unblock-File "$env:USERPROFILE\Scripts\Export-AccessGraph.ps1"
+```
+
+#### Option 2 — Per-invocation bypass (no policy change)
+
+Run a single session at `Bypass` without changing the machine-wide policy:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Export-AccessGraph.ps1 -DatabasePath 'C:\path\to\YourDb.accdb'
+```
+
+#### Option 3 — Sign the script (permanent, survives copying)
+
+A signed script runs under `RemoteSigned` even with the MOTW present, and it keeps working when the file is copied or moved. This is the best option if you distribute the script to others.
+
+### Creating a code-signing certificate
+
+You don't need a paid certificate for internal use — a **self-signed** code-signing certificate works under `RemoteSigned` as long as it is trusted on the machines that run the script.
+
+**1. Create the certificate** (PowerShell 5.1+, run once):
+
+```powershell
+$cert = New-SelfSignedCertificate `
+    -Subject 'CN=Access Graph Tools' `
+    -Type CodeSigningCert `
+    -CertStoreLocation Cert:\CurrentUser\My `
+    -KeyUsage DigitalSignature `
+    -KeyExportPolicy Exportable `
+    -NotAfter (Get-Date).AddYears(5)
+```
+
+**2. Trust the certificate.** A self-signed cert is only trusted once it lives in the *Trusted Root Certification Authorities* and *Trusted Publishers* stores. Copy it from your personal store:
+
+```powershell
+$store = Get-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)"
+foreach ($path in 'Cert:\CurrentUser\Root', 'Cert:\CurrentUser\TrustedPublisher') {
+    $s = New-Object System.Security.Cryptography.X509Certificates.X509Store(
+        ($path -replace 'Cert:\\CurrentUser\\', ''), 'CurrentUser')
+    $s.Open('ReadWrite'); $s.Add($store); $s.Close()
+}
+```
+
+**3. Sign the script:**
+
+```powershell
+$cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Select-Object -First 1
+Set-AuthenticodeSignature -FilePath .\Export-AccessGraph.ps1 -Certificate $cert
+```
+
+`Set-AuthenticodeSignature` appends a signature block to the bottom of the file. The script now runs under `RemoteSigned` on this machine.
+
+> **Note:** A self-signed certificate is only trusted on machines where you have installed it into the trusted stores (step 2). To run the signed script on other PCs, export the public certificate (`Export-Certificate`) and import it into the *Trusted Root* and *Trusted Publishers* stores there. For wider distribution outside a managed environment, use a certificate from a public Certificate Authority instead.
+
+**Re-sign after edits.** Any change to the file invalidates the signature, so re-run `Set-AuthenticodeSignature` (step 3) after editing the script.
