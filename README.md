@@ -455,3 +455,7 @@ Set-AuthenticodeSignature -FilePath .\Export-AccessGraph.ps1 -Certificate $cert
 ### Reports
 
 ![Reports](https://github.com/jcolozzi/MS-Access-Dependency-Grapher/blob/main/images/Reports.png)
+
+## Credits
+
+- Reports contributed by GPGeorge: https://github.com/Grover-Park-Consulting
